@@ -11,12 +11,52 @@ pub(crate) enum Method<T: Serialize> {
     Delete,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "sync"))]
 pub(crate) async fn request<Input: Serialize + std::fmt::Debug, Output: 'static + DeserializeOwned>(
     url: &str,
     apikey: &str,
     method: Method<Input>,
-    expected_status_code: u16
+    expected_status_code: u16,
+) -> Result<Output, Error> {
+    use ureq::OrAnyStatus;
+    trace!("{:?} on {}", method, url);
+
+    let response = match &method {
+        Method::Get => ureq::get(url).set("X-Meili-API-Key", apikey).call(),
+        Method::Delete => ureq::delete(url).set("X-Meili-API-Key", apikey).call(),
+        Method::Post(body) => ureq::post(url)
+            .set("X-Meili-API-Key", apikey)
+            .set("Content-Type", "application/json")
+            .send_string(&to_string(&body).unwrap()),
+        Method::Put(body) => ureq::put(url)
+            .set("X-Meili-API-Key", apikey)
+            .set("Content-Type", "application/json")
+            .send_string(&to_string(&body).unwrap()),
+    }
+    // ureq maps status codes >=400 to Err by default,
+    // but those are completely normal in meilisearch.
+    // Fortunately, they provide this convenience
+    // function for cases like these.
+    .or_any_status()
+    .map_err(|_| crate::errors::Error::InvalidRequest)?;
+
+    let status = response.status();
+    let mut body = response
+        .into_string()
+        .map_err(|e| crate::errors::Error::HttpError(e.into()))?;
+    if body.is_empty() {
+        body = "null".to_string();
+    }
+
+    parse_response(status, expected_status_code, body)
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "async"))]
+pub(crate) async fn request<Input: Serialize + std::fmt::Debug, Output: 'static + DeserializeOwned>(
+    url: &str,
+    apikey: &str,
+    method: Method<Input>,
+    expected_status_code: u16,
 ) -> Result<Output, Error> {
     use isahc::*;
 

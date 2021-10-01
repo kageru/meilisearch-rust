@@ -25,7 +25,9 @@ pub enum Error {
     InvalidRequest,
 
     /// The http client encountered an error.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "sync"))]
+    HttpError(ureq::Error),
+    #[cfg(all(not(target_arch = "wasm32"), feature = "async"))]
     HttpError(isahc::Error),
     /// The http client encountered an error.
     #[cfg(target_arch = "wasm32")]
@@ -293,7 +295,18 @@ impl From<&serde_json::Value> for Error {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "sync"))]
+impl From<ureq::Error> for Error {
+    fn from(error: ureq::Error) -> Error {
+        if error.kind() == ureq::ErrorKind::ConnectionFailed {
+            Error::UnreachableServer
+        } else {
+            Error::HttpError(error)
+        }
+    }
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "async"))]
 impl From<isahc::Error> for Error {
     fn from(error: isahc::Error) -> Error {
         if error.kind() == isahc::error::ErrorKind::ConnectionFailed {
